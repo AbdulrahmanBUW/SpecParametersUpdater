@@ -95,6 +95,8 @@ namespace SpecParametersUpdater
         public int SystemUpdates { get; set; }
         public int SizeUpdates { get; set; }
         public int QuantityUpdates { get; set; }
+        public int ParametersCreated { get; set; }
+        public List<string> CreatedParameters { get; } = new List<string>();
         public List<string> Errors { get; } = new List<string>();
         public List<string> Warnings { get; } = new List<string>();
         public int TotalUpdates => SystemUpdates + SizeUpdates + QuantityUpdates;

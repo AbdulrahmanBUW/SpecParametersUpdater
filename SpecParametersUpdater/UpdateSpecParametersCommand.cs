@@ -3,7 +3,6 @@ using Autodesk.Revit.DB;
 using Autodesk.Revit.UI;
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -23,28 +22,44 @@ namespace SpecParametersUpdater
 
             try
             {
+                // Check if we're in a family document
+                bool isFamilyDoc = doc.IsFamilyDocument;
+
                 var categories = Categories.GetAll();
                 var selection = uidoc.Selection?.GetElementIds();
                 bool useSelection = selection != null && selection.Count > 0;
 
-                var elementsToProcess = CollectElements(doc, selection, useSelection, categories);
-                var cache = new ParameterCache(doc);
-                var stats = new UpdateStats();
+                var elementsToProcess = isFamilyDoc
+                    ? CollectFamilyElements(doc, selection, useSelection)
+                    : CollectElements(doc, selection, useSelection, categories);
 
-                if (Config.ValidateParameters)
-                {
-                    ValidateParameters(doc, stats.Warnings);
-                }
+                var stats = new UpdateStats();
 
                 using (var trans = new Transaction(doc, "Update SPEC_SYSTEM, SPEC_SIZE, SPEC_QUANTITY"))
                 {
                     trans.Start();
+
+                    // Create missing parameters in family documents (must be inside transaction)
+                    if (isFamilyDoc)
+                    {
+                        CreateMissingFamilyParameters(doc, stats);
+                    }
+
+                    // Create cache after parameters are created
+                    var cache = new ParameterCache(doc, isFamilyDoc);
+
+                    // Validate parameters after creation
+                    if (Config.ValidateParameters)
+                    {
+                        ValidateParameters(doc, stats.Warnings, isFamilyDoc);
+                    }
+
                     UpdateAllElements(elementsToProcess, cache, stats, categories);
                     trans.Commit();
                 }
 
                 stopwatch.Stop();
-                ShowResults(doc, stats, stopwatch, useSelection);
+                ShowResults(doc, stats, stopwatch, useSelection, isFamilyDoc);
                 return Result.Succeeded;
             }
             catch (Exception ex)
@@ -52,6 +67,46 @@ namespace SpecParametersUpdater
                 message = $"Error: {ex.Message}";
                 return Result.Failed;
             }
+        }
+
+        private Dictionary<ElementId, Element> CollectFamilyElements(Document doc, ICollection<ElementId> selection, bool useSelection)
+        {
+            var result = new Dictionary<ElementId, Element>();
+
+            if (useSelection)
+            {
+                // Use selected elements
+                foreach (var id in selection)
+                {
+                    var el = doc.GetElement(id);
+                    if (el != null)
+                        result[id] = el;
+                }
+            }
+            else
+            {
+                // Collect all elements in the family (not types)
+                var collector = new FilteredElementCollector(doc)
+                    .WhereElementIsNotElementType();
+
+                foreach (Element el in collector)
+                {
+                    // Skip reference planes, levels, and other non-geometry elements
+                    if (el.Category == null)
+                        continue;
+
+                    var catId = el.Category.Id.IntegerValue;
+
+                    // Skip invalid categories
+                    if (catId < 0)
+                        continue;
+
+                    // Include the element
+                    result[el.Id] = el;
+                }
+            }
+
+            return result;
         }
 
         private Dictionary<ElementId, Element> CollectElements(Document doc, ICollection<ElementId> selection,
@@ -128,11 +183,20 @@ namespace SpecParametersUpdater
             var abbrev = cache.GetInstanceOrType(element, "System Abbreviation");
             if (ParameterHelper.TryGetString(abbrev, out var val)) return val.Trim();
 
-            var name = element.get_Parameter(BuiltInParameter.RBS_SYSTEM_NAME_PARAM);
-            if (ParameterHelper.TryGetString(name, out val)) return val.Trim();
+            // In families, RBS_SYSTEM_NAME_PARAM might not exist
+            try
+            {
+                var name = element.get_Parameter(BuiltInParameter.RBS_SYSTEM_NAME_PARAM);
+                if (ParameterHelper.TryGetString(name, out val)) return val.Trim();
+            }
+            catch { }
 
-            var classif = element.get_Parameter(BuiltInParameter.RBS_SYSTEM_CLASSIFICATION_PARAM);
-            if (ParameterHelper.TryGetString(classif, out val)) return val.Trim();
+            try
+            {
+                var classif = element.get_Parameter(BuiltInParameter.RBS_SYSTEM_CLASSIFICATION_PARAM);
+                if (ParameterHelper.TryGetString(classif, out val)) return val.Trim();
+            }
+            catch { }
 
             return null;
         }
@@ -143,6 +207,7 @@ namespace SpecParametersUpdater
             try
             {
                 if (element.Category == null) return;
+
                 var catId = (BuiltInCategory)element.Category.Id.IntegerValue;
                 if (!sizeCategories.Contains(catId)) return;
 
@@ -174,8 +239,17 @@ namespace SpecParametersUpdater
                 var catId = (BuiltInCategory)element.Category.Id.IntegerValue;
                 if (!sizeCategories.Contains(catId)) return;
 
-                var lengthParam = element.get_Parameter(BuiltInParameter.CURVE_ELEM_LENGTH)
-                    ?? cache.GetInstanceOrType(element, "Length");
+                Parameter lengthParam = null;
+
+                try
+                {
+                    lengthParam = element.get_Parameter(BuiltInParameter.CURVE_ELEM_LENGTH);
+                }
+                catch { }
+
+                if (lengthParam == null)
+                    lengthParam = cache.GetInstanceOrType(element, "Length");
+
                 var specQty = cache.GetInstanceOrType(element, SpecParams.QUANTITY);
 
                 if (specQty == null || specQty.IsReadOnly || lengthParam == null || !lengthParam.HasValue)
@@ -220,29 +294,123 @@ namespace SpecParametersUpdater
             return null;
         }
 
-        private void ValidateParameters(Document doc, List<string> warnings)
+        private void ValidateParameters(Document doc, List<string> warnings, bool isFamilyDoc)
         {
-            var testElement = new FilteredElementCollector(doc).WhereElementIsNotElementType().FirstOrDefault();
-            if (testElement == null) return;
+            Element testElement = null;
 
-            var missing = new List<string>();
-            foreach (var param in SpecParams.GetAll())
+            if (isFamilyDoc)
             {
-                if (testElement.LookupParameter(param) == null)
-                    missing.Add(param);
+                // In family documents, check family manager parameters
+                var familyManager = doc.FamilyManager;
+                if (familyManager != null)
+                {
+                    var missing = new List<string>();
+                    foreach (var paramName in SpecParams.GetAll())
+                    {
+                        var param = familyManager.get_Parameter(paramName);
+                        if (param == null)
+                            missing.Add(paramName);
+                    }
+
+                    if (missing.Count > 0)
+                    {
+                        string msg = $"Missing {missing.Count} family parameters (will be created): " + string.Join(", ", missing.Take(10));
+                        if (missing.Count > 10) msg += $" ... and {missing.Count - 10} more";
+                        warnings.Add(msg);
+                    }
+                }
             }
-
-            if (missing.Count > 0)
+            else
             {
-                string msg = $"Missing {missing.Count} parameters: " + string.Join(", ", missing.Take(10));
-                if (missing.Count > 10) msg += $" ... and {missing.Count - 10} more";
-                warnings.Add(msg);
+                // Original project validation
+                testElement = new FilteredElementCollector(doc).WhereElementIsNotElementType().FirstOrDefault();
+                if (testElement == null) return;
+
+                var missing = new List<string>();
+                foreach (var param in SpecParams.GetAll())
+                {
+                    if (testElement.LookupParameter(param) == null)
+                        missing.Add(param);
+                }
+
+                if (missing.Count > 0)
+                {
+                    string msg = $"Missing {missing.Count} parameters: " + string.Join(", ", missing.Take(10));
+                    if (missing.Count > 10) msg += $" ... and {missing.Count - 10} more";
+                    warnings.Add(msg);
+                }
             }
         }
 
-        private void ShowResults(Document doc, UpdateStats stats, Stopwatch stopwatch, bool useSelection)
+        private void CreateMissingFamilyParameters(Document doc, UpdateStats stats)
         {
-            var summary = BuildSummary(doc, stats, stopwatch, useSelection);
+            var familyManager = doc.FamilyManager;
+            if (familyManager == null)
+            {
+                stats.Warnings.Add("FamilyManager not available");
+                return;
+            }
+
+            var parameterDefinitions = new Dictionary<string, (ForgeTypeId type, bool isInstance)>
+            {
+                { SpecParams.SYSTEM, (SpecTypeId.String.Text, true) },
+                { SpecParams.SIZE, (SpecTypeId.String.Text, true) },
+                { SpecParams.QUANTITY, (SpecTypeId.Number, true) },
+                { SpecParams.POSITION, (SpecTypeId.String.Text, true) },
+                { SpecParams.FILTER, (SpecTypeId.String.Text, true) },
+                { SpecParams.SUPPLIER, (SpecTypeId.String.Text, true) },
+                { SpecParams.WP, (SpecTypeId.String.Text, true) },
+                { SpecParams.MATERIAL, (SpecTypeId.String.Text, true) },
+                { SpecParams.MATERIAL_TEXT_EN, (SpecTypeId.String.Text, true) },
+                { SpecParams.MATERIAL_TEXT_DE, (SpecTypeId.String.Text, true) },
+                { SpecParams.UNITS_EN, (SpecTypeId.String.Text, true) },
+                { SpecParams.UNITS_DE, (SpecTypeId.String.Text, true) },
+                { SpecParams.NAME_EN, (SpecTypeId.String.Text, true) },
+                { SpecParams.NAME_DE, (SpecTypeId.String.Text, true) },
+                { SpecParams.CATEGORY_EN, (SpecTypeId.String.Text, true) },
+                { SpecParams.CATEGORY_DE, (SpecTypeId.String.Text, true) },
+                { SpecParams.NAME_SHORT_EN, (SpecTypeId.String.Text, true) },
+                { SpecParams.NAME_SHORT_DE, (SpecTypeId.String.Text, true) },
+                { SpecParams.COMMENTS_EN, (SpecTypeId.String.Text, true) },
+                { SpecParams.COMMENTS_DE, (SpecTypeId.String.Text, true) },
+                { SpecParams.MANUFACTURER_EN, (SpecTypeId.String.Text, true) },
+                { SpecParams.MANUFACTURER_DE, (SpecTypeId.String.Text, true) },
+                { SpecParams.TYPE_EN, (SpecTypeId.String.Text, true) },
+                { SpecParams.TYPE_DE, (SpecTypeId.String.Text, true) },
+                { SpecParams.ARTICLE_EN, (SpecTypeId.String.Text, true) },
+                { SpecParams.ARTICLE_DE, (SpecTypeId.String.Text, true) },
+                { SpecParams.STATUS_CODE, (SpecTypeId.String.Text, true) },
+                { SpecParams.TOOL_ID, (SpecTypeId.String.Text, true) }
+            };
+
+            foreach (var kvp in parameterDefinitions)
+            {
+                var paramName = kvp.Key;
+                var paramType = kvp.Value.type;
+                var isInstance = kvp.Value.isInstance;
+
+                try
+                {
+                    // Check if parameter already exists
+                    var existingParam = familyManager.get_Parameter(paramName);
+                    if (existingParam == null)
+                    {
+                        // Create the parameter
+                        familyManager.AddParameter(paramName, GroupTypeId.Data, paramType, isInstance);
+                        stats.ParametersCreated++;
+                        stats.CreatedParameters.Add(paramName);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    stats.Errors.Add($"Failed to create parameter {paramName}: {ex.Message}");
+                }
+            }
+        }
+
+        private void ShowResults(Document doc, UpdateStats stats, Stopwatch stopwatch, bool useSelection, bool isFamilyDoc)
+        {
+            var summary = BuildSummary(doc, stats, stopwatch, useSelection, isFamilyDoc);
 
             string logPath = null;
             if (Config.WriteLogFile)
@@ -258,32 +426,109 @@ namespace SpecParametersUpdater
 
             var dialog = new TaskDialog("SPEC Parameters Update Complete");
             dialog.MainInstruction = "Update Completed";
-            dialog.MainContent =
-                $"Mode: {(useSelection ? "SELECTION" : "ALL CATEGORIES")}\n\n" +
-                $"SPEC_SYSTEM: {stats.SystemUpdates}\n" +
-                $"SPEC_SIZE: {stats.SizeUpdates}\n" +
-                $"SPEC_QUANTITY: {stats.QuantityUpdates}\n\n" +
-                $"Total: {stats.TotalUpdates}\n" +
-                $"Errors: {stats.Errors.Count}\n" +
-                $"Time: {stopwatch.Elapsed.TotalSeconds:F2}s";
 
+            string docType = isFamilyDoc ? "FAMILY" : "PROJECT";
+            string mode = useSelection ? "SELECTION" : (isFamilyDoc ? "ALL FAMILY ELEMENTS" : "ALL CATEGORIES");
+
+            var contentBuilder = new StringBuilder();
+            contentBuilder.AppendLine($"Document Type: {docType}");
+            contentBuilder.AppendLine($"Mode: {mode}");
+            contentBuilder.AppendLine();
+
+            // Show parameters created (for families)
+            if (isFamilyDoc && stats.ParametersCreated > 0)
+            {
+                contentBuilder.AppendLine($"Parameters Created: {stats.ParametersCreated}");
+                contentBuilder.AppendLine();
+            }
+
+            contentBuilder.AppendLine($"SPEC_SYSTEM: {stats.SystemUpdates}");
+            contentBuilder.AppendLine($"SPEC_SIZE: {stats.SizeUpdates}");
+            contentBuilder.AppendLine($"SPEC_QUANTITY: {stats.QuantityUpdates}");
+            contentBuilder.AppendLine();
+            contentBuilder.AppendLine($"Total Updates: {stats.TotalUpdates}");
+            contentBuilder.AppendLine($"Errors: {stats.Errors.Count}");
+            contentBuilder.AppendLine($"Time: {stopwatch.Elapsed.TotalSeconds:F2}s");
+
+            dialog.MainContent = contentBuilder.ToString();
+
+            // Build expanded content
+            var expandedBuilder = new StringBuilder();
             if (!string.IsNullOrEmpty(logPath))
-                dialog.ExpandedContent = $"Log: {logPath}";
+            {
+                expandedBuilder.AppendLine($"Log: {logPath}");
+                expandedBuilder.AppendLine();
+            }
+
+            if (stats.ParametersCreated > 0)
+            {
+                expandedBuilder.AppendLine("Created Parameters:");
+                foreach (var param in stats.CreatedParameters)
+                {
+                    expandedBuilder.AppendLine($"  • {param}");
+                }
+                expandedBuilder.AppendLine();
+            }
+
+            if (stats.Warnings.Count > 0)
+            {
+                expandedBuilder.AppendLine("Warnings:");
+                foreach (var w in stats.Warnings.Take(10))
+                {
+                    expandedBuilder.AppendLine($"  • {w}");
+                }
+                if (stats.Warnings.Count > 10)
+                    expandedBuilder.AppendLine($"  ... and {stats.Warnings.Count - 10} more (see log)");
+            }
+
+            if (expandedBuilder.Length > 0)
+            {
+                dialog.ExpandedContent = expandedBuilder.ToString();
+            }
 
             dialog.Show();
         }
 
-        private string BuildSummary(Document doc, UpdateStats stats, Stopwatch stopwatch, bool useSelection)
+        private string BuildSummary(Document doc, UpdateStats stats, Stopwatch stopwatch, bool useSelection, bool isFamilyDoc)
         {
             var sb = new StringBuilder();
             sb.AppendLine("SPEC PARAMETERS UPDATE");
             sb.AppendLine($"Document: {doc.Title}");
+            sb.AppendLine($"Document Type: {(isFamilyDoc ? "FAMILY" : "PROJECT")}");
             sb.AppendLine($"Mode: {(useSelection ? "SELECTION" : "ALL")}");
             sb.AppendLine($"Time: {stopwatch.Elapsed.TotalSeconds:F2}s");
             sb.AppendLine();
+
+            // Add diagnostic info for families
+            if (isFamilyDoc)
+            {
+                var collector = new FilteredElementCollector(doc).WhereElementIsNotElementType();
+                var allElements = collector.ToList();
+                sb.AppendLine($"Total elements found in family: {allElements.Count}");
+
+                var categorized = allElements.GroupBy(e => e.Category?.Name ?? "No Category");
+                foreach (var group in categorized)
+                {
+                    sb.AppendLine($"  {group.Key}: {group.Count()}");
+                }
+                sb.AppendLine();
+            }
+
+            // Show parameters created
+            if (stats.ParametersCreated > 0)
+            {
+                sb.AppendLine($"Parameters Created: {stats.ParametersCreated}");
+                foreach (var param in stats.CreatedParameters)
+                {
+                    sb.AppendLine($"  {param}");
+                }
+                sb.AppendLine();
+            }
+
             sb.AppendLine($"SPEC_SYSTEM: {stats.SystemUpdates}");
             sb.AppendLine($"SPEC_SIZE: {stats.SizeUpdates}");
             sb.AppendLine($"SPEC_QUANTITY: {stats.QuantityUpdates}");
+            sb.AppendLine($"Total Updates: {stats.TotalUpdates}");
             sb.AppendLine($"Errors: {stats.Errors.Count}");
 
             if (stats.Warnings.Count > 0)
