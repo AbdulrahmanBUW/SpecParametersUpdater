@@ -351,54 +351,84 @@ namespace SpecParametersUpdater
                 return;
             }
 
-            var parameterDefinitions = new Dictionary<string, (ForgeTypeId type, bool isInstance)>
+            // Use the shared parameter workaround for Revit 2023
+            DefinitionFile defFile = doc.Application.OpenSharedParameterFile();
+            if (defFile == null)
             {
-                { SpecParams.SYSTEM, (SpecTypeId.String.Text, true) },
-                { SpecParams.SIZE, (SpecTypeId.String.Text, true) },
-                { SpecParams.QUANTITY, (SpecTypeId.Number, true) },
-                { SpecParams.POSITION, (SpecTypeId.String.Text, true) },
-                { SpecParams.FILTER, (SpecTypeId.String.Text, true) },
-                { SpecParams.SUPPLIER, (SpecTypeId.String.Text, true) },
-                { SpecParams.WP, (SpecTypeId.String.Text, true) },
-                { SpecParams.MATERIAL, (SpecTypeId.String.Text, true) },
-                { SpecParams.MATERIAL_TEXT_EN, (SpecTypeId.String.Text, true) },
-                { SpecParams.MATERIAL_TEXT_DE, (SpecTypeId.String.Text, true) },
-                { SpecParams.UNITS_EN, (SpecTypeId.String.Text, true) },
-                { SpecParams.UNITS_DE, (SpecTypeId.String.Text, true) },
-                { SpecParams.NAME_EN, (SpecTypeId.String.Text, true) },
-                { SpecParams.NAME_DE, (SpecTypeId.String.Text, true) },
-                { SpecParams.CATEGORY_EN, (SpecTypeId.String.Text, true) },
-                { SpecParams.CATEGORY_DE, (SpecTypeId.String.Text, true) },
-                { SpecParams.NAME_SHORT_EN, (SpecTypeId.String.Text, true) },
-                { SpecParams.NAME_SHORT_DE, (SpecTypeId.String.Text, true) },
-                { SpecParams.COMMENTS_EN, (SpecTypeId.String.Text, true) },
-                { SpecParams.COMMENTS_DE, (SpecTypeId.String.Text, true) },
-                { SpecParams.MANUFACTURER_EN, (SpecTypeId.String.Text, true) },
-                { SpecParams.MANUFACTURER_DE, (SpecTypeId.String.Text, true) },
-                { SpecParams.TYPE_EN, (SpecTypeId.String.Text, true) },
-                { SpecParams.TYPE_DE, (SpecTypeId.String.Text, true) },
-                { SpecParams.ARTICLE_EN, (SpecTypeId.String.Text, true) },
-                { SpecParams.ARTICLE_DE, (SpecTypeId.String.Text, true) },
-                { SpecParams.STATUS_CODE, (SpecTypeId.String.Text, true) },
-                { SpecParams.TOOL_ID, (SpecTypeId.String.Text, true) }
+                string tempFile = Path.Combine(Path.GetTempPath(), "Temp_SpecParams.txt");
+                if (!File.Exists(tempFile))
+                    File.WriteAllText(tempFile, "# Temp Shared Parameter File");
+                doc.Application.SharedParametersFilename = tempFile;
+                defFile = doc.Application.OpenSharedParameterFile();
+            }
+
+            var group = defFile.Groups.get_Item("SpecParameters") ?? defFile.Groups.Create("SpecParameters");
+
+            var parameterDefinitions = new List<(string name, ForgeTypeId type, bool isInstance)>
+            {
+                (SpecParams.SYSTEM, SpecTypeId.String.Text, true),
+                (SpecParams.POSITION, SpecTypeId.String.Text, true),
+                (SpecParams.SYSTEM, SpecTypeId.String.Text, true),
+                (SpecParams.SIZE, SpecTypeId.String.Text, true),
+                (SpecParams.QUANTITY, SpecTypeId.Number, true),
+                (SpecParams.POSITION, SpecTypeId.String.Text, true),
+                (SpecParams.FILTER, SpecTypeId.String.Text, true),
+                (SpecParams.SUPPLIER, SpecTypeId.String.Text, true),
+                (SpecParams.WP, SpecTypeId.String.Text, true),
+                (SpecParams.MATERIAL, SpecTypeId.String.Text, true),
+                (SpecParams.MATERIAL_TEXT_EN, SpecTypeId.String.Text, true),
+                (SpecParams.MATERIAL_TEXT_DE, SpecTypeId.String.Text, true),
+                (SpecParams.UNITS_EN, SpecTypeId.String.Text, true),
+                (SpecParams.UNITS_DE, SpecTypeId.String.Text, true),
+                (SpecParams.NAME_EN, SpecTypeId.String.Text, true),
+                (SpecParams.NAME_DE, SpecTypeId.String.Text, true),
+                (SpecParams.CATEGORY_EN, SpecTypeId.String.Text, true),
+                (SpecParams.CATEGORY_DE, SpecTypeId.String.Text, true),
+                (SpecParams.NAME_SHORT_EN, SpecTypeId.String.Text, true),
+                (SpecParams.NAME_SHORT_DE, SpecTypeId.String.Text, true),
+                (SpecParams.COMMENTS_EN, SpecTypeId.String.Text, true),
+                (SpecParams.COMMENTS_DE, SpecTypeId.String.Text, true),
+                (SpecParams.MANUFACTURER_EN, SpecTypeId.String.Text, true),
+                (SpecParams.MANUFACTURER_DE, SpecTypeId.String.Text, true),
+                (SpecParams.TYPE_EN, SpecTypeId.String.Text, true),
+                (SpecParams.TYPE_DE, SpecTypeId.String.Text, true),
+                (SpecParams.ARTICLE_EN, SpecTypeId.String.Text, true),
+                (SpecParams.ARTICLE_DE, SpecTypeId.String.Text, true),
+                (SpecParams.STATUS_CODE, SpecTypeId.String.Text, true),
+                (SpecParams.TOOL_ID, SpecTypeId.String.Text, true)
             };
 
-            foreach (var kvp in parameterDefinitions)
+            foreach (var (paramName, typeId, isInstance) in parameterDefinitions)
             {
-                var paramName = kvp.Key;
-                var paramType = kvp.Value.type;
-                var isInstance = kvp.Value.isInstance;
-
                 try
                 {
-                    // Check if parameter already exists
-                    var existingParam = familyManager.get_Parameter(paramName);
-                    if (existingParam == null)
+                    var existing = familyManager.get_Parameter(paramName);
+                    if (existing != null)
+                        continue;
+
+                    // Look for existing shared definition
+                    var def = group.Definitions
+                        .OfType<ExternalDefinition>()
+                        .FirstOrDefault(d => d.Name == paramName);
+
+                    if (def == null)
                     {
-                        // Create the parameter
-                        familyManager.AddParameter(paramName, GroupTypeId.Data, paramType, isInstance);
+                        var options = new ExternalDefinitionCreationOptions(paramName, typeId)
+                        {
+                            Visible = true
+                        };
+                        def = group.Definitions.Create(options) as ExternalDefinition;
+                    }
+
+                    if (def != null)
+                    {
+                        familyManager.AddParameter(def, BuiltInParameterGroup.PG_TEXT, isInstance);
                         stats.ParametersCreated++;
                         stats.CreatedParameters.Add(paramName);
+                    }
+                    else
+                    {
+                        stats.Warnings.Add($"Parameter {paramName} could not be added — not an ExternalDefinition.");
                     }
                 }
                 catch (Exception ex)
@@ -407,6 +437,8 @@ namespace SpecParametersUpdater
                 }
             }
         }
+
+
 
         private void ShowResults(Document doc, UpdateStats stats, Stopwatch stopwatch, bool useSelection, bool isFamilyDoc)
         {
