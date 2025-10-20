@@ -351,7 +351,7 @@ namespace SpecParametersUpdater
                 return;
             }
 
-            // Use the shared parameter workaround for Revit 2023
+            // Shared parameter file workaround
             DefinitionFile defFile = doc.Application.OpenSharedParameterFile();
             if (defFile == null)
             {
@@ -365,48 +365,60 @@ namespace SpecParametersUpdater
             var group = defFile.Groups.get_Item("SpecParameters") ?? defFile.Groups.Create("SpecParameters");
 
             var parameterDefinitions = new List<(string name, ForgeTypeId type, bool isInstance)>
-            {
-                (SpecParams.SYSTEM, SpecTypeId.String.Text, true),
-                (SpecParams.POSITION, SpecTypeId.String.Text, true),
-                (SpecParams.SYSTEM, SpecTypeId.String.Text, true),
-                (SpecParams.SIZE, SpecTypeId.String.Text, true),
-                (SpecParams.QUANTITY, SpecTypeId.Number, true),
-                (SpecParams.POSITION, SpecTypeId.String.Text, true),
-                (SpecParams.FILTER, SpecTypeId.String.Text, true),
-                (SpecParams.SUPPLIER, SpecTypeId.String.Text, true),
-                (SpecParams.WP, SpecTypeId.String.Text, true),
-                (SpecParams.MATERIAL, SpecTypeId.String.Text, true),
-                (SpecParams.MATERIAL_TEXT_EN, SpecTypeId.String.Text, true),
-                (SpecParams.MATERIAL_TEXT_DE, SpecTypeId.String.Text, true),
-                (SpecParams.UNITS_EN, SpecTypeId.String.Text, true),
-                (SpecParams.UNITS_DE, SpecTypeId.String.Text, true),
-                (SpecParams.NAME_EN, SpecTypeId.String.Text, true),
-                (SpecParams.NAME_DE, SpecTypeId.String.Text, true),
-                (SpecParams.CATEGORY_EN, SpecTypeId.String.Text, true),
-                (SpecParams.CATEGORY_DE, SpecTypeId.String.Text, true),
-                (SpecParams.NAME_SHORT_EN, SpecTypeId.String.Text, true),
-                (SpecParams.NAME_SHORT_DE, SpecTypeId.String.Text, true),
-                (SpecParams.COMMENTS_EN, SpecTypeId.String.Text, true),
-                (SpecParams.COMMENTS_DE, SpecTypeId.String.Text, true),
-                (SpecParams.MANUFACTURER_EN, SpecTypeId.String.Text, true),
-                (SpecParams.MANUFACTURER_DE, SpecTypeId.String.Text, true),
-                (SpecParams.TYPE_EN, SpecTypeId.String.Text, true),
-                (SpecParams.TYPE_DE, SpecTypeId.String.Text, true),
-                (SpecParams.ARTICLE_EN, SpecTypeId.String.Text, true),
-                (SpecParams.ARTICLE_DE, SpecTypeId.String.Text, true),
-                (SpecParams.STATUS_CODE, SpecTypeId.String.Text, true),
-                (SpecParams.TOOL_ID, SpecTypeId.String.Text, true)
-            };
+    {
+        (SpecParams.SYSTEM, SpecTypeId.String.Text, true),
+        (SpecParams.SIZE, SpecTypeId.String.Text, true),
+        (SpecParams.QUANTITY, SpecTypeId.Number, true),
+        (SpecParams.POSITION, SpecTypeId.String.Text, true),
+        (SpecParams.FILTER, SpecTypeId.String.Text, true),
+        (SpecParams.SUPPLIER, SpecTypeId.String.Text, true),
+        (SpecParams.WP, SpecTypeId.String.Text, true),
+        (SpecParams.MATERIAL, SpecTypeId.String.Text, true),
+        (SpecParams.MATERIAL_TEXT_EN, SpecTypeId.String.Text, true),
+        (SpecParams.MATERIAL_TEXT_DE, SpecTypeId.String.Text, true),
+        (SpecParams.UNITS_EN, SpecTypeId.String.Text, true),
+        (SpecParams.UNITS_DE, SpecTypeId.String.Text, true),
+        (SpecParams.NAME_EN, SpecTypeId.String.Text, true),
+        (SpecParams.NAME_DE, SpecTypeId.String.Text, true),
+        (SpecParams.CATEGORY_EN, SpecTypeId.String.Text, true),
+        (SpecParams.CATEGORY_DE, SpecTypeId.String.Text, true),
+        (SpecParams.NAME_SHORT_EN, SpecTypeId.String.Text, true),
+        (SpecParams.NAME_SHORT_DE, SpecTypeId.String.Text, true),
+        (SpecParams.COMMENTS_EN, SpecTypeId.String.Text, true),
+        (SpecParams.COMMENTS_DE, SpecTypeId.String.Text, true),
+        (SpecParams.MANUFACTURER_EN, SpecTypeId.String.Text, true),
+        (SpecParams.MANUFACTURER_DE, SpecTypeId.String.Text, true),
+        (SpecParams.TYPE_EN, SpecTypeId.String.Text, true),
+        (SpecParams.TYPE_DE, SpecTypeId.String.Text, true),
+        (SpecParams.ARTICLE_EN, SpecTypeId.String.Text, true),
+        (SpecParams.ARTICLE_DE, SpecTypeId.String.Text, true),
+        (SpecParams.STATUS_CODE, SpecTypeId.String.Text, true),
+        (SpecParams.TOOL_ID, SpecTypeId.String.Text, true)
+    };
 
             foreach (var (paramName, typeId, isInstance) in parameterDefinitions)
             {
                 try
                 {
                     var existing = familyManager.get_Parameter(paramName);
-                    if (existing != null)
-                        continue;
 
-                    // Look for existing shared definition
+                    // SPEC_SYSTEM and SPEC_POSITION must always be instance
+                    bool forceInstance = paramName == SpecParams.SYSTEM || paramName == SpecParams.POSITION;
+                    if (existing != null)
+                    {
+                        if (forceInstance && !existing.IsInstance)
+                        {
+                            // Remove type parameter and re-add as instance
+                            familyManager.RemoveParameter(existing);
+                            existing = null; // will create below
+                        }
+                        else
+                        {
+                            continue; // already exists correctly
+                        }
+                    }
+
+                    // Look for shared definition
                     var def = group.Definitions
                         .OfType<ExternalDefinition>()
                         .FirstOrDefault(d => d.Name == paramName);
@@ -422,7 +434,7 @@ namespace SpecParametersUpdater
 
                     if (def != null)
                     {
-                        familyManager.AddParameter(def, BuiltInParameterGroup.PG_TEXT, isInstance);
+                        familyManager.AddParameter(def, BuiltInParameterGroup.PG_TEXT, forceInstance ? true : isInstance);
                         stats.ParametersCreated++;
                         stats.CreatedParameters.Add(paramName);
                     }
@@ -437,7 +449,6 @@ namespace SpecParametersUpdater
                 }
             }
         }
-
 
 
         private void ShowResults(Document doc, UpdateStats stats, Stopwatch stopwatch, bool useSelection, bool isFamilyDoc)
