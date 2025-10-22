@@ -364,39 +364,40 @@ namespace SpecParametersUpdater
 
             var group = defFile.Groups.get_Item("SpecParameters") ?? defFile.Groups.Create("SpecParameters");
 
-            var parameterDefinitions = new List<(string name, ForgeTypeId type, bool isInstance)>
-    {
-        (SpecParams.SYSTEM, SpecTypeId.String.Text, true),
-        (SpecParams.SIZE, SpecTypeId.String.Text, true),
-        (SpecParams.QUANTITY, SpecTypeId.Number, true),
-        (SpecParams.POSITION, SpecTypeId.String.Text, true),
-        (SpecParams.FILTER, SpecTypeId.String.Text, true),
-        (SpecParams.SUPPLIER, SpecTypeId.String.Text, true),
-        (SpecParams.WP, SpecTypeId.String.Text, true),
-        (SpecParams.MATERIAL, SpecTypeId.String.Text, true),
-        (SpecParams.MATERIAL_TEXT_EN, SpecTypeId.String.Text, true),
-        (SpecParams.MATERIAL_TEXT_DE, SpecTypeId.String.Text, true),
-        (SpecParams.UNITS_EN, SpecTypeId.String.Text, true),
-        (SpecParams.UNITS_DE, SpecTypeId.String.Text, true),
-        (SpecParams.NAME_EN, SpecTypeId.String.Text, true),
-        (SpecParams.NAME_DE, SpecTypeId.String.Text, true),
-        (SpecParams.CATEGORY_EN, SpecTypeId.String.Text, true),
-        (SpecParams.CATEGORY_DE, SpecTypeId.String.Text, true),
-        (SpecParams.NAME_SHORT_EN, SpecTypeId.String.Text, true),
-        (SpecParams.NAME_SHORT_DE, SpecTypeId.String.Text, true),
-        (SpecParams.COMMENTS_EN, SpecTypeId.String.Text, true),
-        (SpecParams.COMMENTS_DE, SpecTypeId.String.Text, true),
-        (SpecParams.MANUFACTURER_EN, SpecTypeId.String.Text, true),
-        (SpecParams.MANUFACTURER_DE, SpecTypeId.String.Text, true),
-        (SpecParams.TYPE_EN, SpecTypeId.String.Text, true),
-        (SpecParams.TYPE_DE, SpecTypeId.String.Text, true),
-        (SpecParams.ARTICLE_EN, SpecTypeId.String.Text, true),
-        (SpecParams.ARTICLE_DE, SpecTypeId.String.Text, true),
-        (SpecParams.STATUS_CODE, SpecTypeId.String.Text, true),
-        (SpecParams.TOOL_ID, SpecTypeId.String.Text, true)
-    };
+            var parameterDefinitions = new List<(string name, ForgeTypeId type, bool isInstance, BuiltInParameterGroup group)>
+            {
+                (SpecParams.SYSTEM, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.SIZE, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.QUANTITY, SpecTypeId.Number, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.POSITION, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.FILTER, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.SUPPLIER, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.WP, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.MATERIAL, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.MATERIAL_TEXT_EN, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.MATERIAL_TEXT_DE, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.UNITS_EN, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.UNITS_DE, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.NAME_EN, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.NAME_DE, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.CATEGORY_EN, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.CATEGORY_DE, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.NAME_SHORT_EN, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.NAME_SHORT_DE, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.COMMENTS_EN, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.COMMENTS_DE, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.MANUFACTURER_EN, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.MANUFACTURER_DE, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.TYPE_EN, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.TYPE_DE, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.ARTICLE_EN, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                (SpecParams.ARTICLE_DE, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_TEXT),
+                // These two parameters should appear under Constraints in projects
+                (SpecParams.STATUS_CODE, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_CONSTRAINTS),
+                (SpecParams.TOOL_ID, SpecTypeId.String.Text, true, BuiltInParameterGroup.PG_CONSTRAINTS)
+            };
 
-            foreach (var (paramName, typeId, isInstance) in parameterDefinitions)
+            foreach (var (paramName, typeId, isInstance, paramGroup) in parameterDefinitions)
             {
                 try
                 {
@@ -434,7 +435,7 @@ namespace SpecParametersUpdater
 
                     if (def != null)
                     {
-                        familyManager.AddParameter(def, BuiltInParameterGroup.PG_TEXT, forceInstance ? true : isInstance);
+                        familyManager.AddParameter(def, paramGroup, forceInstance ? true : isInstance);
                         stats.ParametersCreated++;
                         stats.CreatedParameters.Add(paramName);
                     }
