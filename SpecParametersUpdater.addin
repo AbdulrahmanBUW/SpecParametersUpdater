@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RevitAddIns>
+  <AddIn Type="Command">
+    <Text>Update SPEC Parameters</Text>
+    <Description>Updates SPEC_SYSTEM, SPEC_SIZE, and SPEC_QUANTITY</Description>
+    <Assembly>SpecParametersUpdater.dll</Assembly>
+    <FullClassName>SpecParametersUpdater.UpdateSpecParametersCommand</FullClassName>
+    <ClientId>C201BFEA-F894-4F39-A4F1-97C9C5457559</ClientId>
+    <VendorId>DX</VendorId>
+    <VendorDescription>DEAXO GmbH Dresden</VendorDescription>
+  </AddIn>
+</RevitAddIns>
